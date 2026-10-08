@@ -31,6 +31,9 @@ static int startup_failure(const char *step, int error) {
     snprintf(backend_error, sizeof backend_error, "%s: %s (code %d)", step,
              error ? strerror(error) : "initialization failed", error);
     atomic_store(&backend_failed, true);
+#else
+    (void)step;
+    (void)error;
 #endif
     return 1;
 }
@@ -323,4 +326,3 @@ int main(int argc, char **argv) {
     close(atmosphere.state_fd);
     return 0;
 }
-

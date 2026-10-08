@@ -154,13 +154,14 @@ RemoteDir *remote_opendir(RemoteSource *s,const char *path){
     Buffer b={.grow=true};if(s->dav){
         if(dav_request(s,path,&b)){free(b.data);free(d);return NULL;}const char *p=(char *)b.data,*end=p+b.used;
         while(p&&p<end){const char *body,*open=xml_open(p,end,"response",&body),*close=open?xml_close(body,end,"response"):NULL;if(!open||!close)break;p=close+1;
-            char href[1024]={0},kind[128]={0},size[64]={0};
+            char href[1024]={0},kind[128]={0},size[64]={0},modified[128]={0};
             if(!xml_value(body,close,"href",href,sizeof href) || !xml_value(body,close,"status",kind,sizeof kind) || !strstr(kind," 200 "))continue;
             url_decode(href);size_t n=strlen(href);while(n&&href[n-1]=='/')href[--n]=0;
             const char *href_path=href;while(*href_path=='/')href_path++;if(!strcmp(href_path,path))continue;
             char *name=strrchr(href,'/');name=name?name+1:href;if(!*name||!strcmp(name,".")||!strcmp(name,"..")||strchr(name,'\\'))continue;
             struct smb2_stat_64 st={0};char type[128]={0};xml_value(body,close,"resourcetype",type,sizeof type);st.smb2_type=contains_ci(type,"collection")?SMB2_TYPE_DIRECTORY:SMB2_TYPE_FILE;
             if(xml_value(body,close,"getcontentlength",size,sizeof size)){char *tail;errno=0;unsigned long long value=strtoull(size,&tail,10);if(errno||*tail||value>INT64_MAX)continue;st.smb2_size=value;}
+            if(xml_value(body,close,"getlastmodified",modified,sizeof modified)){time_t value=curl_getdate(modified,NULL);if(value!=(time_t)-1)st.smb2_mtime=(uint64_t)value;}
             if(d->count>=100000)goto fail;void *entries=realloc(d->entries,(d->count+1)*sizeof *d->entries);if(!entries)goto fail;d->entries=entries;d->entries[d->count].name=strdup(name);if(!d->entries[d->count].name)goto fail;d->entries[d->count++].st=st;
         }
         free(b.data);return d;
@@ -202,6 +203,7 @@ RemoteFile *remote_open(RemoteSource *s,const char *path,int flags){
 }
 int remote_fstat(RemoteSource *s,RemoteFile *f,struct smb2_stat_64 *st){
     if(s->smb)return smb2_fstat(s->smb,f->smb,st);
+    if(s->dav)return remote_stat(s,f->path,st);
     Buffer b={0};if(request(s,f->path,false,&b,NULL,true))return -1;
     curl_off_t size=-1,time=-1;curl_easy_getinfo(s->curl,CURLINFO_CONTENT_LENGTH_DOWNLOAD_T,&size);curl_easy_getinfo(s->curl,CURLINFO_FILETIME_T,&time);
     if(size<0)return -1;memset(st,0,sizeof *st);st->smb2_type=SMB2_TYPE_FILE;st->smb2_size=(uint64_t)size;st->smb2_mtime=time<0?0:(uint64_t)time;return 0;

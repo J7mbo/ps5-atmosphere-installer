@@ -2,7 +2,7 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for changes and update requirements.
 
-Atmosphere is a controller-driven PS5 homebrew application for browsing games on your own SMB and FTP servers and copying them to internal storage or an attached USB drive. It is derived from [Orbit Store](https://github.com/saawant12/orbit-store-ps5).
+Atmosphere is a controller-driven PS5 homebrew application for browsing games on your own SMB, FTP, and WebDAV servers and copying them to internal storage or an attached USB drive. It is derived from [Orbit Store](https://github.com/saawant12/orbit-store-ps5).
 
 The current application uses a native OpenGL interface and an in-process C backend. Normal browsing and copying do not require a separately launched service ELF.
 
@@ -14,7 +14,7 @@ The current application uses a native OpenGL interface and an in-process C backe
 
 ## Features
 
-- Multiple SMB and FTP servers, including anonymous/guest connections; activate, deactivate, edit, and remove saved servers.
+- Multiple SMB, FTP, and WebDAV servers, including anonymous/guest connections; activate, deactivate, edit, and remove saved servers.
 - Discovery of game folders, exFAT images, and FFPFSC images, with metadata and cached cover art where supported.
 - Smooth scrolling, controller focus animations, square cover cards, and a frosted background.
 - Sorting by title or date added.
@@ -69,17 +69,18 @@ The v2026.10.07.2 prerelease adds frosted cards, a continuous rounded selector, 
 
 ### First server setup
 
-Open **Servers** and press **Square** to add a server. Choose SMB or FTP and enter the server IP address or hostname.
+Open **Servers** and press **Square** to add a server. Choose SMB, FTP, WebDAV (HTTP), or WebDAV (HTTPS) and enter the server IP address or hostname.
 
 - **SMB:** enter the share name separately from the folder. For example, `\\SERVER\games\ps5` uses share `games` and folder `ps5`. The default port is `445`. Guest shares can use blank credentials if the server permits guest access.
 - **FTP:** enter the folder relative to the FTP server's root, without a leading slash. Leave Share and Domain blank. The default port is `21`; blank username/password uses anonymous FTP if the server permits it. This is plain FTP, not SFTP.
+- **WebDAV:** choose **WebDAV (HTTPS)** when your server supports TLS (the usual choice) or **WebDAV (HTTP)** for a trusted local network. Enter the folder relative to the WebDAV server root, without a leading slash, and leave Share and Domain blank. Default ports are `443` (HTTPS) and `80` (HTTP). Atmosphere uses read-only `PROPFIND` and ranged `GET` requests; it does not write to the server.
 
 Save the server, highlight it, and press **Cross** so its status reads **ACTIVE**. Go to **Library** and press **Square** to scan. If the list stays empty, check the server path, permissions, and that the PS5 can reach the server on your network.
 
 ## Usage
 
 1. Launch Atmosphere from the registered folder application.
-2. Open **Servers**, add an SMB or FTP server, and activate it. Use your server address, share/path, and credentials as appropriate.
+2. Open **Servers**, add an SMB, FTP, or WebDAV server, and activate it. Use your server address, share/path, and credentials as appropriate.
 3. Return to **Library** and press Square to scan.
 4. Select a game, choose a destination, and start copying.
 5. Close Atmosphere with Options when finished so ShadowMountPlus can finish detecting copied games.

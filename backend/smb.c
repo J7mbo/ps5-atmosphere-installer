@@ -51,7 +51,8 @@ static double monotonic_seconds(void) {
 }
 static const char *state_name = "smb-state.json";
 static const char *source_protocol(const cJSON *cfg) {
-    return !strcmp(json_text(cfg,"protocol"),"ftp")?"ftp":"smb";
+    const char *protocol=json_text(cfg,"protocol");
+    return !strcmp(protocol,"ftp")?"ftp":!strcmp(protocol,"webdav")?"webdav":!strcmp(protocol,"webdavs")?"webdavs":"smb";
 }
 
 static bool component(const char *s) {
@@ -205,6 +206,13 @@ static RemoteSource *connect_source(const cJSON *cfg,const char *secret,char *er
         unsigned port=(unsigned)strtoul(json_text(cfg,"port"),NULL,10);
         RemoteSource *s=remote_ftp(json_text(cfg,"server"),port,json_text(cfg,"username"),secret,halted);
         if(!s)copy_text(error,cap,"Cannot initialize FTP connection.");
+        return s;
+    }
+    if(!strcmp(json_text(cfg,"protocol"),"webdav") || !strcmp(json_text(cfg,"protocol"),"webdavs")) {
+        connection_status("Connecting to WebDAV server...");
+        unsigned port=(unsigned)strtoul(json_text(cfg,"port"),NULL,10);
+        RemoteSource *s=remote_webdav(json_text(cfg,"server"),port,json_text(cfg,"username"),secret,!strcmp(json_text(cfg,"protocol"),"webdavs"),halted);
+        if(!s)copy_text(error,cap,"Cannot initialize WebDAV connection.");
         return s;
     }
     struct smb2_context *s=connect_smb(cfg,secret,error,cap);return s?remote_smb(s):NULL;
@@ -561,7 +569,7 @@ static int copy_file(RemoteSource *s, const char *remote, int parent, const char
     CopyPipeline pipeline;bool pipelined=false,used_pipeline=false;
     CopyReader reader={s,in,chunk,destroyed,0};
     double started=monotonic_seconds(),wait_seconds=0,write_seconds=0,hash_seconds=0,verify_started=0,verify_seconds=0;
-    uint64_t copied=0;bool smb_protocol=remote_smb_context(s)!=NULL;
+    uint64_t copied=0;const char *protocol=remote_protocol(s);
     /* Native titles can have a smaller heap than payload builds. Keep the
      * pipeline, but reduce each batch when two full-size buffers do not fit. */
     for (;;) {
@@ -586,9 +594,9 @@ static int copy_file(RemoteSource *s, const char *remote, int parent, const char
         int error=errno;
         snprintf(err,256,"Cannot inspect partial file: %s (errno %d)",strerror(error),error); goto end;
     }
-    struct stat path_st;
     const struct stat *named_file=NULL;
 #ifdef ATMOSPHERE_NATIVE_APP
+    struct stat path_st;
     if(st.st_nlink==0 && !fstatat(parent,name,&path_st,AT_SYMLINK_NOFOLLOW))named_file=&path_st;
 #endif
     if (!partial_file_valid(&st,named_file,target->device,before.smb2_size)) {
@@ -683,7 +691,7 @@ end:
     pthread_mutex_lock(&lock);
     cJSON *timing=cJSON_CreateObject();
     if(timing){
-        cJSON_AddStringToObject(timing,"protocol",smb_protocol?"smb":"ftp");
+        cJSON_AddStringToObject(timing,"protocol",protocol);
         cJSON_AddBoolToObject(timing,"readAhead",used_pipeline);
         cJSON_AddNumberToObject(timing,"bufferBytes",capacity);
         cJSON_AddNumberToObject(timing,"bytes",(double)copied);
@@ -700,7 +708,7 @@ end:
     pthread_mutex_unlock(&lock);
     /* One bounded record per file, no server paths or credentials. */
     char profile[512];int length=snprintf(profile,sizeof profile,"protocol=%s pipeline=%d buffer=%u bytes=%llu elapsed=%.3f remote=%.3f wait=%.3f write=%.3f hash=%.3f verify=%.3f result=%d\n",
-        smb_protocol?"smb":"ftp",used_pipeline,capacity,(unsigned long long)copied,monotonic_seconds()-started,reader.seconds,wait_seconds,write_seconds,hash_seconds,verify_seconds,rc);
+        protocol,used_pipeline,capacity,(unsigned long long)copied,monotonic_seconds()-started,reader.seconds,wait_seconds,write_seconds,hash_seconds,verify_seconds,rc);
     int logfd=openat(atmosphere.state_fd,"transfer-profile.log",O_WRONLY|O_CREAT|O_APPEND|O_NOFOLLOW,0600);
     if(logfd>=0){struct stat logst;if(!fstat(logfd,&logst)&&S_ISREG(logst.st_mode)&&logst.st_size<65536)(void)write(logfd,profile,(size_t)length);close(logfd);}
     if (out >= 0) close(out);
@@ -976,15 +984,15 @@ int smb_action(const cJSON *input, char *error, size_t cap) {
         if (!cJSON_GetArraySize(sources) || !*active_source) { code = 400; copy_text(error, cap, "Activate or add a server first."); goto end; }
         const char *server = json_text(input, "server"), *share = json_text(input, "share");
         const char *protocol=json_text(input,"protocol"),*port=json_text(input,"port");
-        bool ftp=!strcmp(protocol,"ftp");
-        if((*protocol && strcmp(protocol,"smb") && !ftp) || strlen(port)>5 || (*port && (strspn(port,"0123456789")!=strlen(port) || strtoul(port,NULL,10)<1 || strtoul(port,NULL,10)>65535))) {
-            code=400;copy_text(error,cap,"Choose SMB or FTP and a port from 1 to 65535.");goto end;
+        bool ftp=!strcmp(protocol,"ftp"), webdav=!strcmp(protocol,"webdav") || !strcmp(protocol,"webdavs");
+        if((*protocol && strcmp(protocol,"smb") && !ftp && !webdav) || strlen(port)>5 || (*port && (strspn(port,"0123456789")!=strlen(port) || strtoul(port,NULL,10)<1 || strtoul(port,NULL,10)>65535))) {
+            code=400;copy_text(error,cap,"Choose SMB, FTP, WebDAV, or WebDAVS and a port from 1 to 65535.");goto end;
         }
         const char *folder = json_text(input, "folder");
         const char *destination = json_text(input, "destinationFolder");
         if (!*destination) destination = "homebrew";
         if (!*server || strlen(server) > 253 || strpbrk(server, "/\\@?# \t\r\n") ||
-            (!ftp && !component(share)) || !relative(folder) || !relative(destination) || strlen(destination) > 240 ||
+            (!ftp && !webdav && !component(share)) || !relative(folder) || !relative(destination) || strlen(destination) > 240 ||
             !strncmp(destination, ".atmosphere-smb-staging", sizeof ".atmosphere-smb-staging"-1) || strlen(json_text(input, "username")) > 255 ||
             strlen(json_text(input, "domain")) > 255 || strlen(json_text(input, "password")) > 255) {
             code = 400; copy_text(error, cap, "Enter a server, an SMB share when applicable, and a folder without a leading slash or '..'."); goto end;
